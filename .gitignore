@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Tool scratch directories
+.codex/
+.agents/
+
+# Transient run output (paper-scale CSVs and figures are tracked explicitly)
+results/paper_run.log
+results/quick_*
+results/paper_smoke_*
