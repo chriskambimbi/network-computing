@@ -122,9 +122,15 @@ Re-run before citing exact numbers in §5.
 - **§5.2 stragglers (Q3)** — Sonata should remain P=R=1.0 at
   1/10/100 ms delay. UnivMon is structurally inexpressible and appears
   as N/A, not as zero precision/recall.
-- **§5.3 packet loss (Q2)** — Sonata should remain exact at paper scale.
-  UnivMon is degraded; recall falls as worker cardinality increases
-  because sketch collisions dominate small per-worker count gaps.
+- **§5.3 packet loss (Q2)** — Sonata remains P=R=1.0 across loss
+  probabilities (0.1%/1%/5%) at paper scale. UnivMon is degraded;
+  recall falls with worker cardinality, not loss rate, because sketch
+  collisions dominate small per-worker count gaps. At default width=512,
+  recall is ~0.50 at N=8, ~0.14 at N=16, ~0.05 at N=32. At N=32 the
+  sketch also loses precision (~0.55–0.65) — sketch overestimates start
+  alerting workers that did not actually drop a chunk. To match Sonata's
+  recall at N=32 the sketch needs ~32k registers (~655 KB), roughly
+  100× Sonata's per-key store; report this in §5.3 as the budget result.
 - **§5.3b UnivMon key sensitivity (Q2)** — intermittent loss is used
   so `(worker)` and `(job, worker)` keys lose the bad-round dimension.
   `(job, round, worker)` is the natural but collision-prone key. The
@@ -134,26 +140,54 @@ Re-run before citing exact numbers in §5.
 - **§5.3c negative controls** — rows report `false_positive_rate` for
   no anomaly, benign jitter, staggered job starts, and background traffic.
   Precision/recall are intentionally blank because there are no true
-  positives in these controls.
+  positives in these controls. Q2 (`sonata_control`) and Q3
+  (`sonata_control`) hold FPR=0 across baseline/jitter/background. Q5
+  (`sonata_external_windowed`) holds FPR=0 on staggered_starts and ~0.01
+  on background_traffic — call out the residual rate honestly in prose;
+  it is the correlation monitor's tolerance, not a Q5 expressibility
+  failure.
 - **§5.4 multi-tenancy (Q2)** — Sonata state grows linearly with
-  jobs × rounds × workers; UnivMon state is fixed by sketch width × depth.
-  This is the one regime where the sketch's resource model favors it;
-  flag this honestly in §5.4 prose. The plot uses approximate register
-  bytes, not just logical state entries.
+  jobs × rounds × workers (1,600 B at {1 job, 8 workers} → 25,600 B at
+  {4 jobs, 32 workers}); UnivMon stays fixed at ~10,240 B for the default
+  sketch geometry. This is the one regime where the sketch's resource
+  model favors it; flag this honestly in §5.4 prose, and note that the
+  Sonata advantage on Q2 accuracy (§5.3) costs proportionally more state
+  here. The plot uses approximate register bytes, not just logical state
+  entries.
 - **§5.4b round failure (Q4)** — `sonata_windowed` uses a configured
-  expected-round schedule and timeout. It detects missing chunks and
-  fully failed rounds with P=R=1.0 in the synthetic workload, but its
-  `state_entries` scales as workers × chunks for the expected set.
-  `inc_aware` is the strawman expected-set/round-state baseline and
-  should also detect these cases exactly while reporting its hardware
-  state cost. UnivMon remains structurally inexpressible and appears as
-  N/A.
+  expected-round schedule and timeout. At timeout ≥ 5 ms it detects
+  missing chunks and fully failed rounds with P=R=1.0; at timeout=1 ms
+  precision drops to ~0.17 (recall stays 1.0) because the monitor fires
+  before legitimate rounds finish — bias/variance knob behaving as
+  designed. Time-to-detection equals the timeout on `failed_round` and
+  ≈110 ms at 50 ms timeout for partial `missing_chunks` (timer has to
+  elapse before the gap is declarable). `healthy_bursty` yields zero
+  alerts at all timeouts. `sonata_windowed.state_entries` scales as
+  workers × chunks (~204,800 at N=8 up to ~819,200 at N=32) for the
+  expected set; `inc_aware` is the strawman expected-set/round-state
+  baseline and reaches the same P=R behaviour with ~25,600 entries
+  (single round of chunks), an 8–32× state ratio that is the §6.1
+  expected-set primitive argument. UnivMon remains structurally
+  inexpressible and appears as N/A.
 - **§5.4c interference (Q5)** — `sonata_external_windowed` models
   Sonata-style per-round latency output feeding a downstream sliding
-  correlation monitor. Native Sonata and UnivMon remain N/A; exact
-  precision/recall depends on the correlation window and threshold.
-  `inc_aware` runs the same job-aware window as the strawman reference.
-- **§5.5 audit** — Sonata expresses Q1/Q2/Q3 cleanly, Q4 awkwardly, Q5 not at all. UnivMon expresses zero of the five cleanly; Q2 is "degraded," the rest are NotExpressible. `inc_aware` is expected to cover Q1-Q5 because it is given the missing INC primitives.
+  correlation monitor. Native Sonata and UnivMon remain N/A. At the
+  default 20 ms induced delay and window=8 the job-aware `inc_aware`
+  baseline reaches P≈0.48 / R≈0.85 with time-to-detection ≈141 ms;
+  `sonata_external_windowed` reaches P≈0.43 / R≈0.67 with
+  time-to-detection ≈304 ms. Sub-0.5 precision is the genuine fuzziness
+  of correlation-based interference detection — discuss as a §6 design
+  limitation, not a workload bug. Exact numbers shift with window and
+  threshold; re-run before citing.
+- **§5.5 audit** — Sonata expresses Q1/Q2/Q3 cleanly (Q2/Q3 hit P=R=1.0 in
+  the sweep), Q4 awkwardly (only via the `sonata_windowed` variant with
+  an expected-set primitive baked in), Q5 not at all natively (only via
+  the `sonata_external_windowed` downstream-correlation variant). UnivMon
+  expresses zero of the five cleanly; Q2 is "degraded" (recall collapses
+  with N, precision collapses at high N), the rest are NotExpressible
+  and surface as `expressible=False` with a structural reason. `inc_aware`
+  covers Q1–Q5 because it is given the missing INC primitives, and is
+  the load-bearing point of comparison for §6.
 
 ### Conventions for editing the code
 
